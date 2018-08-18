@@ -5,12 +5,14 @@ using System.Data;
 using System.Drawing;
 using System.Linq;
 using System.Media;
+using System.Reflection;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
+using Nevron.Nov.Graphics;
 
 namespace WindowsFormsApp1
 {
@@ -20,7 +22,7 @@ namespace WindowsFormsApp1
         public Thread LTS;
         public SolidBrush Color_background = new System.Drawing.SolidBrush(Color.GhostWhite);
         public Pen Color_bar = new System.Drawing.Pen(Color.FromArgb(80, 240, 123));
-        public Pen Color_bar_drop = new System.Drawing.Pen(Color.FromArgb(0, 160, 103));
+        public Pen Color_bar_drop = new System.Drawing.Pen(Color.FromArgb(80, 0, 0, 60));
         public float Bar_drop_size = 10;
         public float Bar_length_inc = 1f;
         public float Bar_length_scale = 0f;
@@ -28,6 +30,9 @@ namespace WindowsFormsApp1
 
         public float time;
         public bool Animate = false;
+        public bool Exaggerate = false;
+        public bool OnTop = false;
+        public bool HideMenu = true;
 
         public Form1()
         {
@@ -41,6 +46,8 @@ namespace WindowsFormsApp1
 
             LTS = new Thread(ListenToSterio);
             LTS.Start();
+            
+            nColorBoxControl1.Widget.SelectedColor = new NColor(Color_bar.Color.R, Color_bar.Color.G, Color_bar.Color.B);
         }
 
         private void ListenToSterio()
@@ -50,6 +57,11 @@ namespace WindowsFormsApp1
 
             while (true)
             {
+                if (OnTop)
+                {
+                    TopMost = true;
+                }
+
                 if (Animate)
                 {
                     time += Time_Tickrate;
@@ -84,6 +96,14 @@ namespace WindowsFormsApp1
 
         private Bitmap CreateBars(float master, float left, float right)
         {
+            if (Exaggerate)
+            {
+                master = master * master * master * 10;
+                left = left * left * left * 10;
+                right = right * right * right * 10;
+            }
+
+
             Bitmap img = new Bitmap(frequencyVisualizer.Width, frequencyVisualizer.Height);
             Graphics mockup = Graphics.FromImage(img);
 
@@ -103,6 +123,7 @@ namespace WindowsFormsApp1
                 }
                 else
                 {
+                    mockup.DrawLine(Color_bar, 0, i, length, i);
                     mockup.DrawLine(Color_bar_drop, 0, i, length, i);
                 }
             }
@@ -117,6 +138,7 @@ namespace WindowsFormsApp1
                 }
                 else
                 {
+                    mockup.DrawLine(Color_bar, 0, j, length, j);
                     mockup.DrawLine(Color_bar_drop, 0, j, length, j);
                 }
             }
@@ -131,6 +153,7 @@ namespace WindowsFormsApp1
                 }
                 else
                 {
+                    mockup.DrawLine(Color_bar, 0, k, length, k);
                     mockup.DrawLine(Color_bar_drop, 0, k, length, k);
                 }
             }
@@ -146,6 +169,42 @@ namespace WindowsFormsApp1
         private void checkBox1_CheckedChanged(object sender, EventArgs e)
         {
             Animate = checkBox1.Checked;
+        }
+
+        private void checkBox2_CheckedChanged(object sender, EventArgs e)
+        {
+            Exaggerate = checkBox2.Checked;
+        }
+
+        private void Form1_Activated(object sender, EventArgs e)
+        {
+            FormBorderStyle = FormBorderStyle.FixedDialog;
+            Size = new Size(816, 265);
+        }
+
+        private void Form1_Deactivate(object sender, EventArgs e)
+        {
+            FormBorderStyle = FormBorderStyle.None;
+            if (HideMenu)
+            {
+                Size = new Size(816, 205);
+            }
+        }
+
+        private void checkBox3_CheckedChanged(object sender, EventArgs e)
+        {
+            OnTop = checkBox3.Checked;
+        }
+
+        private void nColorBoxControl1_SelectedColorChanged(Nevron.Nov.Dom.NValueChangeEventArgs arg)
+        {
+            NColor c = (Nevron.Nov.Graphics.NColor) arg.NewValue;
+            Color_bar.Color = Color.FromArgb(c.R, c.G, c.B);
+        }
+
+        private void checkBox4_CheckedChanged(object sender, EventArgs e)
+        {
+            HideMenu = checkBox4.Checked;
         }
     }
 }
