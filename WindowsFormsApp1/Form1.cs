@@ -6,10 +6,12 @@ using System.Drawing;
 using System.Linq;
 using System.Media;
 using System.Reflection;
+using System.Runtime.InteropServices;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Forms;
+using System.Windows.Input;
 using NAudio.CoreAudioApi;
 using NAudio.Wave;
 using Nevron.Nov.Graphics;
@@ -20,6 +22,8 @@ namespace WindowsFormsApp1
     {
         public bool listen = true;
         public Thread LTS;
+        public Color ControlColor = SystemColors.Control;
+        public Color ChromaKey = Color.DeepPink;
         public SolidBrush Color_background = new System.Drawing.SolidBrush(Color.GhostWhite);
         public Pen Color_bar = new System.Drawing.Pen(Color.FromArgb(80, 240, 123));
         public Pen Color_bar_drop = new System.Drawing.Pen(Color.FromArgb(80, 0, 0, 60));
@@ -27,12 +31,31 @@ namespace WindowsFormsApp1
         public float Bar_length_inc = 1f;
         public float Bar_length_scale = 0f;
         public float Time_Tickrate = 1 / 10f;
+        public Bitmap PrevFrame;
 
         public float time;
         public bool Animate = false;
         public bool Exaggerate = false;
-        public bool OnTop = false;
+        public string OnTop = "Normal";
         public bool HideMenu = true;
+        public bool VerticalBars = false;
+        public bool FlipBars = false;
+        public bool BarShadow = true;
+
+        public IntPtr hwndf;
+        public IntPtr hwndParent;
+        public IntPtr defaultParent;
+
+        [DllImport("user32.dll", CharSet=CharSet.Auto)]
+        public static extern IntPtr FindWindow(
+            [MarshalAs(UnmanagedType.LPTStr)] string lpClassName,
+            [MarshalAs(UnmanagedType.LPTStr)] string lpWindowName);
+        [DllImport("user32.dll")]
+        public static extern IntPtr SetParent(
+            IntPtr hWndChild,      // handle to window
+            IntPtr hWndNewParent   // new parent window
+        );
+
 
         public Form1()
         {
@@ -45,9 +68,17 @@ namespace WindowsFormsApp1
             time = 0;
 
             LTS = new Thread(ListenToSterio);
+            LTS.SetApartmentState(ApartmentState.STA);
             LTS.Start();
             
             nColorBoxControl1.Widget.SelectedColor = new NColor(Color_bar.Color.R, Color_bar.Color.G, Color_bar.Color.B);
+            nColorBoxControl2.Widget.SelectedColor = new NColor(Color_background.Color.R, Color_background.Color.G, Color_background.Color.B);
+            nColorBoxControl3.Widget.SelectedColor = new NColor(ControlColor.R, ControlColor.G, ControlColor.B);
+            nColorBoxControl4.Widget.SelectedColor = new NColor(ChromaKey.R, ChromaKey.G, ChromaKey.B, ChromaKey.A);
+
+            defaultParent = Handle;
+            hwndf = Handle;
+            hwndParent = FindWindow("ProgMan", null);
         }
 
         private void ListenToSterio()
@@ -57,9 +88,28 @@ namespace WindowsFormsApp1
 
             while (true)
             {
-                if (OnTop)
+                if ((Keyboard.IsKeyDown(Key.LeftShift) || Keyboard.IsKeyDown(Key.RightShift)) && Keyboard.IsKeyDown(Key.F12))
+                {
+                    MessageBox.Show("You resumed the Volume Visualizer to normal mode!", "Alert!", MessageBoxButtons.OK, MessageBoxIcon.Information);
+                    comboBox1.SelectedIndex = 0;
+                    OnTop = "Normal";
+                    SetParent(hwndf,defaultParent);
+                }
+
+                if (OnTop == "Normal")
+                {
+                    TopMost = false;
+                }
+                else if (OnTop == "Top" && Form.ActiveForm == null)
                 {
                     TopMost = true;
+                }
+                else if (OnTop == "Behind")
+                {
+                    TopMost = false;
+
+                    // "Behind"
+                    SetParent(hwndf,hwndParent);
                 }
 
                 if (Animate)
@@ -96,6 +146,11 @@ namespace WindowsFormsApp1
 
         private Bitmap CreateBars(float master, float left, float right)
         {
+            if (PrevFrame != null && (frequencyVisualizer.Width == 0 || frequencyVisualizer.Height == 0))
+            {
+                return PrevFrame;
+            }
+
             if (Exaggerate)
             {
                 master = master * master * master * 10;
@@ -113,51 +168,192 @@ namespace WindowsFormsApp1
 
             mockup.FillRectangle(Color_background, 0, 0, img.Width, img.Height);   // Background
 
-            // Fill a bar for master
-            for (int i = 0; i < img.Height/3; i++)
+            if (VerticalBars)
             {
-                float length = img.Width * master + i * Bar_length_inc;
-                if (i < img.Height / 3 - Bar_drop_size)
+                // Fill a bar for master
+                for (int i = 0; i < img.Width/3; i++)
                 {
-                    mockup.DrawLine(Color_bar, 0, i, length, i);
+                    float length = img.Height * master + i * Bar_length_inc;
+                    if (i < img.Width / 3 - Bar_drop_size)
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, i, 0, i, length);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, i, img.Height, i, img.Height-length);
+                        }
+                    }
+                    else
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, i, 0, i, length);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, i, 0, i, length);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, i, img.Height, i, img.Height-length);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, i, img.Height, i, img.Height-length);
+                        }
+                    }
                 }
-                else
+
+                // Fill a bar for left speaker
+                for (int j = img.Width/3; j < img.Width/3 * 2; j++)
                 {
-                    mockup.DrawLine(Color_bar, 0, i, length, i);
-                    mockup.DrawLine(Color_bar_drop, 0, i, length, i);
+                    float length = img.Height * left + j * Bar_length_inc;
+                    if (j < img.Width / 3 * 2 - Bar_drop_size)
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, j, 0, j, length);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, j, img.Height, j, img.Height-length);
+                        }
+                    }
+                    else
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, j, 0, j, length);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, j, 0, j, length);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, j, img.Height, j, img.Height-length);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, j, img.Height, j, img.Height-length);
+                        }
+                    }
+                }
+
+                // Fill a bar for right speaker
+                for (int k = img.Width/3 * 2; k < img.Width/3 * 3 + 2; k++)
+                {
+                    float length = img.Height * right + k * Bar_length_inc;
+                    if (k < img.Width / 3 * 3 - Bar_drop_size)
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, k, 0, k, length);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, k, img.Height, k, img.Height-length);
+                        }
+                    }
+                    else
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, k, 0, k, length);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, k, 0, k, length);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, k, img.Height, k, img.Height-length);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, k, img.Height, k, img.Height-length);
+                        }
+                    }
+                }
+            }
+            else
+            {
+                // Fill a bar for master
+                for (int i = 0; i < img.Height/3; i++)
+                {
+                    float length = img.Width * master + i * Bar_length_inc;
+                    if (i < img.Height / 3 - Bar_drop_size)
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, img.Width,  i, img.Width-length, i);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, 0, i, length, i);
+                        }
+                    }
+                    else
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, img.Width, i, img.Width-length, i);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, img.Width, i, img.Width-length, i);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, 0, i, length, i);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, 0, i, length, i);
+                        }
+                    }
+                }
+
+                // Fill a bar for left speaker
+                for (int j = img.Height/3; j < img.Height/3 * 2; j++)
+                {
+                    float length = img.Width * left + j * Bar_length_inc;
+                    if (j < img.Height / 3 * 2 - Bar_drop_size)
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, img.Width, j, img.Width-length, j);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, 0, j, length, j);
+                        }
+                    }
+                    else
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, img.Width, j, img.Width-length, j);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, img.Width, j, img.Width-length, j);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, 0, j, length, j);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, 0, j, length, j);
+                        }
+                    }
+                }
+
+                // Fill a bar for right speaker
+                for (int k = img.Height/3 * 2; k < img.Height/3 * 3 + 2; k++)
+                {
+                    float length = img.Width * right + k * Bar_length_inc;
+                    if (k < img.Height / 3 * 3 - Bar_drop_size)
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, img.Width,  k, img.Width-length, k);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, 0, k, length, k);
+                        }
+                    }
+                    else
+                    {
+                        if (FlipBars)
+                        {
+                            mockup.DrawLine(Color_bar, img.Width, k, img.Width-length, k);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, img.Width, k, img.Width-length, k);
+                        }
+                        else
+                        {
+                            mockup.DrawLine(Color_bar, 0, k, length, k);
+                            if (BarShadow) mockup.DrawLine(Color_bar_drop, 0, k, length, k);
+                        }
+                    }
                 }
             }
 
-            // Fill a bar for left speaker
-            for (int j = img.Height/3; j < img.Height/3 * 2; j++)
-            {
-                float length = img.Width * left + j * Bar_length_inc;
-                if (j < img.Height / 3 * 2 - Bar_drop_size)
-                {
-                    mockup.DrawLine(Color_bar, 0, j, length, j);
-                }
-                else
-                {
-                    mockup.DrawLine(Color_bar, 0, j, length, j);
-                    mockup.DrawLine(Color_bar_drop, 0, j, length, j);
-                }
-            }
-
-            // Fill a bar for right speaker
-            for (int k = img.Height/3 * 2; k < img.Height/3 * 3; k++)
-            {
-                float length = img.Width * right + k * Bar_length_inc;
-                if (k < img.Height / 3 * 3 - Bar_drop_size)
-                {
-                    mockup.DrawLine(Color_bar, 0, k, length, k);
-                }
-                else
-                {
-                    mockup.DrawLine(Color_bar, 0, k, length, k);
-                    mockup.DrawLine(Color_bar_drop, 0, k, length, k);
-                }
-            }
-
+            PrevFrame = img;
             return img;
         }
 
@@ -178,22 +374,39 @@ namespace WindowsFormsApp1
 
         private void Form1_Activated(object sender, EventArgs e)
         {
-            FormBorderStyle = FormBorderStyle.FixedDialog;
-            Size = new Size(816, 265);
+            if (HideMenu)
+            {
+                Size = new Size(Width, Height+menuBox.Height);
+                frequencyVisualizer.Anchor = AnchorStyles.Top | AnchorStyles.Bottom | AnchorStyles.Left | AnchorStyles.Right;
+            }
+            else
+            {
+                Size = new Size(Width, Height);
+            }
+            FormBorderStyle = FormBorderStyle.Sizable;
+            menuBox.Show();
         }
 
         private void Form1_Deactivate(object sender, EventArgs e)
         {
-            FormBorderStyle = FormBorderStyle.None;
             if (HideMenu)
             {
-                Size = new Size(816, 205);
+                frequencyVisualizer.Anchor = AnchorStyles.Top;
+                Size = new Size(Width, Height);
+                menuBox.Hide();
+
+                Size = new Size(Width, Height-menuBox.Height);
             }
+            else
+            {
+                Size = new Size(Width, Height);
+            }
+            FormBorderStyle = FormBorderStyle.None;
         }
 
-        private void checkBox3_CheckedChanged(object sender, EventArgs e)
+        private void checkBox4_CheckedChanged(object sender, EventArgs e)
         {
-            OnTop = checkBox3.Checked;
+            HideMenu = checkBox4.Checked;
         }
 
         private void nColorBoxControl1_SelectedColorChanged(Nevron.Nov.Dom.NValueChangeEventArgs arg)
@@ -202,9 +415,46 @@ namespace WindowsFormsApp1
             Color_bar.Color = Color.FromArgb(c.R, c.G, c.B);
         }
 
-        private void checkBox4_CheckedChanged(object sender, EventArgs e)
+        private void nColorBoxControl2_SelectedColorChanged(Nevron.Nov.Dom.NValueChangeEventArgs arg)
         {
-            HideMenu = checkBox4.Checked;
+            NColor c = (Nevron.Nov.Graphics.NColor) arg.NewValue;
+            Color_background.Color = Color.FromArgb(c.R, c.G, c.B);
+        }
+
+        private void nColorBoxControl3_SelectedColorChanged(Nevron.Nov.Dom.NValueChangeEventArgs arg)
+        {
+            NColor c = (Nevron.Nov.Graphics.NColor) arg.NewValue;
+            BackColor = Color.FromArgb(c.R, c.G, c.B);
+        }
+
+        private void checkBox5_CheckedChanged(object sender, EventArgs e)
+        {
+            VerticalBars = checkBox5.Checked;
+        }
+
+        private void checkBox6_CheckedChanged(object sender, EventArgs e)
+        {
+            FlipBars = checkBox6.Checked;
+        }
+
+        private void nColorBoxControl4_SelectedColorChanged(Nevron.Nov.Dom.NValueChangeEventArgs arg)
+        {
+            NColor c = (Nevron.Nov.Graphics.NColor) arg.NewValue;
+            TransparencyKey = Color.FromArgb(c.R, c.G, c.B);
+        }
+
+        private void checkBox7_CheckedChanged(object sender, EventArgs e)
+        {
+            BarShadow = checkBox7.Checked;
+        }
+
+        private void comboBox1_SelectedIndexChanged(object sender, EventArgs e)
+        {
+            OnTop = comboBox1.SelectedItem.ToString();
+            if (OnTop == "Behind")
+            {
+                MessageBox.Show("OBS! Seems like you are trying to place the program below the desktop icons! Remember to use SHIFT + F12 to resume to normal mode!", "Alert!", MessageBoxButtons.OK, MessageBoxIcon.Information);
+            }
         }
     }
 }
